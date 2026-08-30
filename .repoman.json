@@ -1,0 +1,64 @@
+{
+  "id_namespace": "T",
+  "roots": [
+    "."
+  ],
+  "version_targets": [
+    {
+      "file": "docs/TRACKING.md",
+      "match": "Version: (\\d+\\.\\d+\\.\\d+)"
+    }
+  ],
+  "release": {
+    "steps": [
+      {
+        "name": "sync",
+        "builtin": "syncver",
+        "always": true
+      },
+      {
+        "name": "go-sanity",
+        "run": "repoman gomod check",
+        "always": true
+      },
+      {
+        "name": "build",
+        "run": "go build ./..."
+      },
+      {
+        "name": "vet",
+        "run": "go vet ./..."
+      },
+      {
+        "name": "test",
+        "run": "go test ./... -count=1"
+      },
+      {
+        "name": "archive",
+        "builtin": "archive"
+      }
+    ],
+    "archive": {
+      "sources": [
+        "."
+      ],
+      "exclude": [
+        ".git"
+      ]
+    }
+  },
+  "wave_plan": "docs/WAVE_PLAN.md",
+  "wave_short_names": {
+    "1": "baseline features",
+    "2": "traversal -- code/data classification and control-flow discovery",
+    "3": "cli input/output flexibility -- symbol annotation and alternate output",
+    "4": "decoder verification rigor -- fuzz and property testing"
+  },
+  "wave_tracking": "docs/WAVE_TRACKING.md",
+  "wave_visibility": {
+    "1": true,
+    "2": true,
+    "3": true,
+    "4": true
+  }
+}
