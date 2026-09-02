@@ -4,3 +4,8 @@
 .ed-journal.json
 /tools/roundtrip/roundtrip
 /tools/dialectcheck/dialectcheck
+
+# repoman relcore's own release artifacts
+.release-state.json
+release-*.log
+zendis-v*-checkpoint.zip

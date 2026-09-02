@@ -1,25 +1,24 @@
 {
   "id_namespace": "T",
-  "roots": [
-    "."
-  ],
-  "version_targets": [
-    {
-      "file": "docs/TRACKING.md",
-      "match": "Version: (\\d+\\.\\d+\\.\\d+)"
-    }
-  ],
   "release": {
+    "archive": {
+      "exclude": ["*.DS_Store"],
+      "sources": [
+        ".github", ".gitignore", ".repoman.json", "CHANGELOG.md",
+        "LICENSE", "README.md", "VERSION", "cmd", "docs", "go.mod",
+        "go.sum", "pkg", "tools"
+      ]
+    },
     "steps": [
       {
-        "name": "sync",
+        "always": true,
         "builtin": "syncver",
-        "always": true
+        "name": "sync"
       },
       {
+        "always": true,
         "name": "go-sanity",
-        "run": "repoman gomod check",
-        "always": true
+        "run": "repoman gomod check"
       },
       {
         "name": "build",
@@ -34,31 +33,44 @@
         "run": "go test ./... -count=1"
       },
       {
-        "name": "archive",
-        "builtin": "archive"
+        "builtin": "archive",
+        "name": "archive"
       }
-    ],
-    "archive": {
-      "sources": [
-        "."
-      ],
-      "exclude": [
-        ".git"
-      ]
-    }
+    ]
   },
+  "roots": [
+    "."
+  ],
+  "version_targets": [
+    {
+      "file": "docs/TRACKING.md",
+      "match": "Version: (\\d+\\.\\d+\\.\\d+)"
+    }
+  ],
   "wave_plan": "docs/WAVE_PLAN.md",
   "wave_short_names": {
     "1": "baseline features",
+    "10": "input-recording support, RZX",
     "2": "traversal -- code/data classification and control-flow discovery",
     "3": "cli input/output flexibility -- symbol annotation and alternate output",
-    "4": "decoder verification rigor -- fuzz and property testing"
+    "4": "decoder verification rigor -- fuzz and property testing",
+    "5": "tape image input -- TAP and TZX",
+    "6": "snapshot input, 48K -- SNA and Z80",
+    "7": "snapshot input, 128K paged memory",
+    "8": "tape image input, PZX",
+    "9": "snapshot input, SZX"
   },
   "wave_tracking": "docs/WAVE_TRACKING.md",
   "wave_visibility": {
     "1": true,
+    "10": true,
     "2": true,
     "3": true,
-    "4": true
+    "4": true,
+    "5": true,
+    "6": true,
+    "7": true,
+    "8": true,
+    "9": true
   }
 }

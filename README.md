@@ -69,6 +69,75 @@ a `DB` line of raw bytes rather than causing a hard failure, so a
 partial or misaligned binary still produces a listing for the bytes
 that do decode.
 
+### Tape and snapshot input
+
+Real ZX Spectrum software is overwhelmingly distributed as tape images
+or machine snapshots, not pre-extracted raw binaries -- `--tape` and
+`--snapshot` load directly from either instead of requiring that
+extraction as a separate step first:
+
+```
+./zendis --tape=game.tap --format=listing
+./zendis --tape=game.tzx --block-name=CODE --format=listing
+./zendis --snapshot=game.sna --format=pasmo
+./zendis --snapshot=game.z80 --org=0x8000 --length=0x2000 --format=listing
+```
+
+Exactly one input source is required: a positional raw-binary path,
+`--tape=FILE` (`.tap` or `.tzx`, auto-detected from the file's own
+bytes), or `--snapshot=FILE` (`.sna` or `.z80`, v1/v2/v3, 48K only --
+see below).
+
+`--org` and `--length` apply uniformly across all three input kinds
+via `--org`/`--length` overriding whatever the source itself provides
+-- a tape block's own load address, or a snapshot's own `PC` -- rather
+than requiring it. Omitted, `--org` defaults to 0 for a raw binary, or
+the source's own answer for `--tape`/`--snapshot`; `--length` defaults
+to everything the source provides (the whole file, the whole tape
+block, or up to the top of the 64K address space for a snapshot).
+
+For `--tape`, `--block=N` selects a block by its position in the
+tape's own block list (not a header+data pair count -- some real
+tapes, confirmed by inspecting an actual commercial release, have a
+single header for a small BASIC loader followed by several bare data
+blocks with no headers at all, for a custom loading routine that
+already knows their addresses; `--block` can reach those too, but
+needs `--org` supplied explicitly since there's no header to default
+one from). `--block-name=NAME` selects by exact header name instead,
+taking precedence over `--block`. Neither given, the first block whose
+header type is Code is used -- a reasonable default, not a guarantee
+of finding the "main" code block on a tape with several Code blocks
+(a screen or data buffer can legitimately come first; override with
+`--block`/`--block-name` when it does).
+
+`--snapshot` handles 128K-family snapshots too, auto-detected from the
+file the same way 48K ones are -- no separate flag needed. Banks 5 and
+2 are always mapped at `0x4000`/`0x8000` in every normal 128K/+2/+2A/+3
+mode; only the top quarter, `0xC000`-`0xFFFF`, varies. By default that
+means whichever bank the snapshot's own paging state has selected (a
+"current view" -- reconstructing exactly what the CPU would see if
+resumed, `--org` defaulting to the snapshot's own `PC` as for 48K).
+`--bank=N` (0-7) overrides that, mapping bank `N` at `0xC000` instead,
+for inspecting a bank that isn't currently paged in -- `--org`, if also
+given, must then fall in `0xC000`-`0xFFFF`, the only range a bank can
+ever occupy; omitted, it defaults to `0xC000`.
+
+Two things are deliberately out of scope, refused with a clear error
+rather than guessed at: the +3's special all-RAM paging mode (a
+genuinely different memory layout selected by port `0x1FFD`'s own bit
+0, which `zentools` carries as a raw, undecoded byte -- no foundation
+here to reconstruct it correctly on top of), and any `--org` below
+`0x4000` (ROM, never captured in a snapshot of any kind).
+
+Built on [`github.com/ha1tch/zentools`](https://github.com/ha1tch/zentools)'s
+format parsers (`pkg/tap`, `pkg/tzx`, `pkg/snapshot`) -- `pkg/load`'s
+own job is picking which piece of a tape or snapshot to disassemble
+and resolving its load address, not re-parsing bytes zentools already
+understands. Exported at the library level (`load.FromTape`/`FromTAP`/
+`FromTZX`/`FromSnapshot48K`/`FromSNA48K`/`FromZ80`), the same as
+`pkg/render`, for the same reason: an embedder gets the real thing,
+not a CLI-only capability.
+
 ### Hints file
 
 `--hints=<path>` loads a plain-text file of directives that let you tell

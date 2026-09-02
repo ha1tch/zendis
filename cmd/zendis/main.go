@@ -1,27 +1,40 @@
 // Command zendis disassembles Z80/Z80N machine code from a binary
-// file. This is a thin CLI wrapper: flag parsing and process exit
-// codes live here, but the actual decode-loop orchestration and every
-// output format are pkg/render's -- the same relationship
-// pkg/disasm's Decode/DecodeTarget already has with this command.
+// file, a tape image (.tap/.tzx), or a 48K snapshot (.sna/.z80). This
+// is a thin CLI wrapper: flag parsing and process exit codes live
+// here, but the actual decode-loop orchestration and every output
+// format are pkg/render's, and tape/snapshot extraction is pkg/load's
+// -- the same relationship pkg/disasm's Decode/DecodeTarget already
+// has with this command.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/ha1tch/zendis/pkg/disasm"
+	"github.com/ha1tch/zendis/pkg/load"
 	"github.com/ha1tch/zendis/pkg/render"
 )
 
 func main() {
-	org := flag.Uint("org", 0, "load address of the first byte (decimal, or 0x-prefixed hex)")
+	orgStr := flag.String("org", "", "load address (decimal, or 0x-prefixed hex). Raw-binary mode defaults to 0 if omitted; --tape/--snapshot mode uses the source's own load address/PC if omitted, or overrides it if given")
 	targetName := flag.String("target", "z80", "CPU target: z80 (Z80N-only opcodes stay undefined) or z80n")
 	warnZ80N := flag.Bool("warn-z80n", true, "under --target=z80, warn on stderr when an undefined opcode matches a Z80N instruction")
 	labels := flag.Bool("labels", true, "replace JP/JR/CALL/DJNZ target addresses with generated labels (Lxxxx) where no hints-file name overrides them")
 	hintsPath := flag.String("hints", "", "path to a hints file (label/comment/data/entry directives -- see README)")
 	format := flag.String("format", "listing", "output format: listing (default), plain/zenas, pasmo, sjasmplus, snasm (all four re-assemblable), or json")
 	symPath := flag.String("sym", "", "write a symbol file (format matches --format: pasmo's/zenas's shape for plain/zenas/pasmo, sjasmplus's shape for sjasmplus) -- requires --format to be one of those four; not available for snasm, see README")
+
+	tapePath := flag.String("tape", "", "load code from a tape image (.tap, .tzx, or .pzx) instead of a raw binary file")
+	snapshotPath := flag.String("snapshot", "", "load code from a snapshot (.sna, .z80, or .szx, 48K or 128K-family) instead of a raw binary file; see --bank for 128K-family bank selection")
+	recordingPath := flag.String("recording", "", "load code from the first embedded snapshot in an RZX input-recording file instead of a raw binary file; see --bank for 128K-family bank selection")
+	blockStr := flag.String("block", "", "--tape only: select a block by its 0-based position in the tape's own block list (not a header+data pair count -- some tapes have bare data blocks with no header at all); default is the first Code-type block found")
+	blockName := flag.String("block-name", "", "--tape only: select a block by its exact header name, overriding --block")
+	lengthStr := flag.String("length", "", "limit disassembly to N bytes from the resolved org (decimal, or 0x-prefixed hex); default is everything the source itself provides (the whole file, the whole tape block, or up to the top of the 64K address space for a snapshot)")
+	bankStr := flag.String("bank", "", "--snapshot/--recording only, 128K-family snapshots: select a specific RAM bank (0-7) to appear at 0xC000-0xFFFF, overriding the snapshot's own paging state -- for inspecting a bank that is not currently paged in. Not meaningful for a 48K snapshot")
+
 	flag.Parse()
 
 	var target disasm.Target
@@ -52,15 +65,54 @@ func main() {
 		}
 	}
 
-	if flag.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: zendis [--org ADDR] [--hints FILE] [--format listing|plain|zenas|pasmo|sjasmplus|snasm|json] [--sym FILE] <file.bin>")
+	// Exactly one input source: a positional raw-binary path, --tape,
+	// --snapshot, or --recording.
+	sources := 0
+	if flag.NArg() == 1 {
+		sources++
+	}
+	if *tapePath != "" {
+		sources++
+	}
+	if *snapshotPath != "" {
+		sources++
+	}
+	if *recordingPath != "" {
+		sources++
+	}
+	if sources != 1 {
+		fmt.Fprintln(os.Stderr, "usage: zendis [flags] <file.bin>\n   or: zendis [flags] --tape=FILE.tap|FILE.tzx|FILE.pzx\n   or: zendis [flags] --snapshot=FILE.sna|FILE.z80|FILE.szx\n   or: zendis [flags] --recording=FILE.rzx\nexactly one input source is required")
+		os.Exit(2)
+	}
+	if *blockName != "" || *blockStr != "" {
+		if *tapePath == "" {
+			fmt.Fprintln(os.Stderr, "zendis: --block/--block-name only apply with --tape")
+			os.Exit(2)
+		}
+	}
+	if *bankStr != "" && *snapshotPath == "" && *recordingPath == "" {
+		fmt.Fprintln(os.Stderr, "zendis: --bank only applies with --snapshot or --recording")
 		os.Exit(2)
 	}
 
-	code, err := os.ReadFile(flag.Arg(0))
+	orgOverride, err := parseOptionalU16(*orgStr, "--org")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zendis: %v\n", err)
-		os.Exit(1)
+		os.Exit(2)
+	}
+	lengthOverride, err := parseOptionalLength(*lengthStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zendis: %v\n", err)
+		os.Exit(2)
+	}
+	var bankOverride *int
+	if *bankStr != "" {
+		b, err := strconv.Atoi(*bankStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zendis: invalid --bank %q: %v\n", *bankStr, err)
+			os.Exit(2)
+		}
+		bankOverride = &b
 	}
 
 	hints := &disasm.Hints{}
@@ -79,7 +131,23 @@ func main() {
 		hints = h
 	}
 
-	d := render.NewDisassembly(code, uint16(*org), target, hints, *labels)
+	code, org, err := resolveInput(inputArgs{
+		rawPath:       flagArgOrEmpty(),
+		tapePath:      *tapePath,
+		snapshotPath:  *snapshotPath,
+		recordingPath: *recordingPath,
+		blockStr:      *blockStr,
+		blockName:     *blockName,
+		bank:          bankOverride,
+		org:           orgOverride,
+		length:        lengthOverride,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zendis: %v\n", err)
+		os.Exit(1)
+	}
+
+	d := render.NewDisassembly(code, org, target, hints, *labels)
 	exitCode := 0
 	if d.TruncatedTail() {
 		exitCode = 1
@@ -122,4 +190,114 @@ func main() {
 	}
 
 	os.Exit(exitCode)
+}
+
+// flagArgOrEmpty returns flag.Arg(0), or "" if there isn't one -- a
+// small helper so the mutual-exclusion logic above (already checked)
+// doesn't need repeating here.
+func flagArgOrEmpty() string {
+	if flag.NArg() == 1 {
+		return flag.Arg(0)
+	}
+	return ""
+}
+
+// parseOptionalU16 parses s as a uint16 (decimal or 0x-prefixed hex)
+// if non-empty, returning nil if s is empty -- the shared "was this
+// explicitly set" pattern --org and --length both need, since 0 is a
+// legitimate value for either and can't double as an unset sentinel.
+func parseOptionalU16(s, flagName string) (*uint16, error) {
+	if s == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseUint(s, 0, 16)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s %q: %w", flagName, s, err)
+	}
+	u := uint16(v)
+	return &u, nil
+}
+
+func parseOptionalLength(s string) (*int, error) {
+	if s == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseUint(s, 0, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --length %q: %w", s, err)
+	}
+	n := int(v)
+	return &n, nil
+}
+
+// inputArgs bundles resolveInput's parameters -- one struct instead of
+// seven positional arguments, given how many of them there are.
+type inputArgs struct {
+	rawPath       string
+	tapePath      string
+	snapshotPath  string
+	recordingPath string
+	blockStr      string
+	blockName     string
+	bank          *int
+	org           *uint16
+	length        *int
+}
+
+// resolveInput reads and extracts code+org from whichever input source
+// was given -- exactly one of args.rawPath/tapePath/snapshotPath/
+// recordingPath is non-empty, already validated by main before this is
+// called.
+func resolveInput(args inputArgs) (code []byte, org uint16, err error) {
+	switch {
+	case args.tapePath != "":
+		image, err := os.ReadFile(args.tapePath)
+		if err != nil {
+			return nil, 0, err
+		}
+		opts := load.TapeOptions{Options: load.Options{Org: args.org, Length: args.length}}
+		if args.blockName != "" {
+			opts.BlockName = args.blockName
+		} else if args.blockStr != "" {
+			idx, err := strconv.Atoi(args.blockStr)
+			if err != nil {
+				return nil, 0, fmt.Errorf("invalid --block %q: %w", args.blockStr, err)
+			}
+			opts.BlockIndex = &idx
+		}
+		return load.FromTape(image, opts)
+
+	case args.snapshotPath != "":
+		image, err := os.ReadFile(args.snapshotPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		opts := load.SnapshotOptions{Options: load.Options{Org: args.org, Length: args.length}, Bank: args.bank}
+		return load.FromSnapshot(image, opts)
+
+	case args.recordingPath != "":
+		image, err := os.ReadFile(args.recordingPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		opts := load.SnapshotOptions{Options: load.Options{Org: args.org, Length: args.length}, Bank: args.bank}
+		return load.FromRZX(image, opts)
+
+	default:
+		code, err := os.ReadFile(args.rawPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		org := uint16(0)
+		if args.org != nil {
+			org = *args.org
+		}
+		if args.length != nil {
+			if *args.length > len(code) {
+				return nil, 0, fmt.Errorf("--length %d exceeds the %d bytes available in %s", *args.length, len(code), args.rawPath)
+			}
+			code = code[:*args.length]
+		}
+		return code, org, nil
+	}
 }

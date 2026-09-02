@@ -51,32 +51,23 @@ func TestDDFD_Oracle_HALTException(t *testing.T) {
 		t.Fatalf("zendis decoded %q len %d, want \"HALT\" len 2", in.Text(), in.Length)
 	}
 
-	// zen80's own executeDD panics on DD 76: its involvesHL fast path
-	// checks (x==1 && (y==6||z_val==6)), true for 0x76 (x=1,y=6,z=6),
-	// routing it into the "LD (IX+d),r" branch and calling
-	// getRegister8(6) -- which panics by design. Confirmed against
-	// zen80/z80/prefix_ddfd.go: the file's other two DD/FD dispatch
-	// sites correctly special-case "0x40-0x7F except 0x76"; this fast
-	// path doesn't. Real bug, not touched here (same standing rule as
-	// the rest of this session) -- recovered so this oracle check
-	// degrades to "can't verify" instead of crashing the whole suite.
-	// zendis's own decode above, independently correct per documented
-	// Z80 behaviour, stands regardless.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Logf("zen80 oracle unavailable for DD 76 (panics: %v) -- confirmed upstream bug, not re-verified here", r)
-			}
-		}()
-		cpu, _ := newPlainOracle(bytes, 0x8000)
-		cpu.Step()
-		if !cpu.Halted {
-			t.Error("zen80: DD 76 did not set Halted")
-		}
-		if cpu.PC != 0x8002 {
-			t.Errorf("zen80 PC after DD 76 = %#04x, want 0x8002", cpu.PC)
-		}
-	}()
+	// zen80 < 0.5.6's own executeDD panicked on DD 76: its involvesHL
+	// fast path checked (x==1 && (y==6||z_val==6)), true for 0x76
+	// (x=1,y=6,z=6), routing it into the "LD (IX+d),r" branch and
+	// calling getRegister8(6) -- which panicked by design. Fixed in
+	// zen80 v0.5.6 (confirmed via a live, panic-free run before this
+	// assertion was trusted, not just read from the changelog); this
+	// oracle check now asserts directly rather than recovering from an
+	// expected panic. zendis's own decode above, independently correct
+	// per documented Z80 behaviour, was never affected either way.
+	cpu, _ := newPlainOracle(bytes, 0x8000)
+	cpu.Step()
+	if !cpu.Halted {
+		t.Error("zen80: DD 76 did not set Halted")
+	}
+	if cpu.PC != 0x8002 {
+		t.Errorf("zen80 PC after DD 76 = %#04x, want 0x8002", cpu.PC)
+	}
 }
 
 // TestDDFD_Oracle_EXDEHLException: DD EB must genuinely swap DE/HL,
@@ -96,15 +87,16 @@ func TestDDFD_Oracle_EXDEHLException(t *testing.T) {
 	cpu.SetHL(0x2222)
 	cpu.SetIX(0x9999) // sentinel: must be untouched
 	cpu.Step()
-	// zen80 confirmed to swap DE<->IX here, leaving HL untouched -- it
-	// is not treating EX DE,HL as unaffected by the DD prefix the way
-	// the HALT exception (also missing) documents zendis's own decoder
-	// as handling correctly. A real bug, not touched here; detected and
-	// logged rather than failing the suite over an external divergence.
+	// zen80 < 0.5.6 substituted IX into EX DE,HL instead of leaving it
+	// unaffected by the DD prefix, the same way the HALT exception
+	// documents zendis's own decoder as handling correctly. Fixed in
+	// zen80 v0.5.6 (confirmed via a live register check before this
+	// assertion was trusted, not just read from the changelog); this
+	// oracle check now asserts directly rather than logging a known
+	// divergence and skipping.
 	if cpu.DE() != 0x2222 || cpu.HL() != 0x1111 || cpu.IX() != 0x9999 {
-		t.Logf("zen80 diverges on DD EB: DE=%#04x HL=%#04x IX=%#04x (want DE=0x2222 HL=0x1111 IX=0x9999 unchanged) -- confirmed upstream bug: DD prefix appears to substitute IX into EX DE,HL instead of leaving it unaffected",
+		t.Errorf("zen80 DD EB: DE=%#04x HL=%#04x IX=%#04x, want DE=0x2222 HL=0x1111 IX=0x9999 unchanged",
 			cpu.DE(), cpu.HL(), cpu.IX())
-		t.Skip("zen80 EX DE,HL-under-DD divergence confirmed; not re-verified here")
 	}
 }
 

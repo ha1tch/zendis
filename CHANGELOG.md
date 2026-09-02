@@ -1,5 +1,179 @@
 # zendis — Changelog
 
+## [0.3.9] — 2026-09-02
+
+### Changed
+
+- Bumped `github.com/ha1tch/zen80` to `v0.5.6` (from `v0.5.5`),
+  verified against the real published module. Diffed the published
+  commit against what had been locally prepared and tested before it
+  was pushed: the only difference was an unrelated vendored-tooling
+  cleanup, every actual code file byte-identical.
+
+### Fixed
+
+- **T-3's two hard-coded DD/FD exception checks (`HALT`, `EX DE,HL`)
+  now assert directly against zen80's real dispatch**, instead of
+  recovering from an expected panic (`HALT`) or logging a known
+  divergence and skipping (`EX DE,HL`). Both were degraded specifically
+  because zen80 v0.5.5 had confirmed bugs in both opcodes under a
+  DD/FD prefix; v0.5.6 carries the fix for both, so both checks were
+  upgraded to real, unconditional assertions and verified passing
+  against the now-current dependency. T-3 stays `◐` (partial) --
+  the exhaustive sweep of the ~200 general-case substituted opcodes
+  this doesn't cover is still genuinely not attempted.
+
+## [0.3.8] — 2026-09-02
+
+### Changed
+
+- Bumped `github.com/ha1tch/zentools` to `v0.8.6` (from `v0.8.5`),
+  verified against the real published module -- full `build`/`vet`/
+  `test`/`repoman gomod check` clean. zendis still never imports
+  `pkg/basic`, so the keyword-spacing fixes in 0.8.6 don't change
+  zendis's own behaviour; this is a currency bump, not a behaviour
+  fix. Updated the one comment in `snapshot128.go` that names the
+  currently-depended-on version to match.
+
+## [0.3.7] — 2026-09-01
+
+### Changed
+
+- Dropped the local `replace github.com/ha1tch/zentools => ...` hook
+  in `go.mod` -- zentools is now published on GitHub, so zendis
+  depends on the real `github.com/ha1tch/zentools v0.8.3`, verified
+  by fetching it through the actual module proxy (not the local
+  clone) and running the full build/vet/test suite against it.
+  `repoman gomod check` confirms clean.
+
+### Fixed
+
+- Two stale comments, both verified against the real published
+  zentools v0.8.3 before being touched, not assumed stale: the
+  `EncodeSNA128` bank-2/bank-5 aliasing bug this package's own
+  `snapshot128.go` documented as an open upstream issue "as of
+  v0.6.0" is confirmed fixed (verified with a direct test against the
+  real module: it now refuses cleanly with an error instead of
+  silently producing a corrupt image) -- comment updated to reflect
+  this. `snapshot.go`'s `FromZ80` comment, which worked around a
+  misleading claim in zentools's own `DecodeZ80` doc comment ("v2/v3
+  is not yet supported", contradicted by the code, which does
+  support them) is simplified now that the upstream comment itself is
+  fixed -- see zentools's own v0.8.3 changelog.
+
+## [0.3.6] — 2026-08-31
+
+### Added
+
+- **PZX tape input** (`--tape=FILE.pzx`, auto-detected via the "PZXT"
+  signature same as `.tap`/`.tzx`). Reuses `selectBlock`'s existing
+  index/name/default-to-Code selection entirely -- a PZX file's `DATA`
+  blocks decode into the same `[]tap.Block` shape `FromTAP`/`FromTZX`
+  already select from. Deliberately more permissive than
+  `github.com/ha1tch/zentools`'s own PZX -> TAP reconstruction: no
+  pulse-timing check applies here, since a `DATA` block's payload is
+  already resolved bytes by the time PZX's own decoder produces it,
+  regardless of what timing represented them physically on tape.
+  Verified against both standard and deliberately non-standard
+  (turbo-loader-style) timing. Closes T-13.
+- **SZX snapshot input** (`--snapshot=FILE.szx`, auto-detected via the
+  "ZXST" signature), 48K or 128K-family, with the same
+  `--bank`/`--org`/`--length` options `.sna`/`.z80` already support.
+  `szx.Decode` produces the identical `*snapshot.MachineState` type
+  those formats already decode to, so no new flattening logic was
+  needed -- just a new decode entry point into what already existed.
+  Closes T-14.
+- **RZX input-recording support** (`--recording=FILE.rzx`), extracting
+  code from the first embedded snapshot with the same
+  `--bank`/`--org`/`--length` handling a standalone snapshot gets. The
+  most interesting of the three: a genuinely new input category, not
+  just another format zentools happens to parse -- disassemble code
+  straight from a TAS/competition recording without first manually
+  extracting the snapshot. An `External` snapshot block (a filename
+  reference, not embedded data) is rejected with a clear error rather
+  than silently producing nothing; embedded-snapshot extension
+  matching is case-insensitive. Closes T-15.
+
+### Fixed
+
+- **`FromTZX` now reads TZX blocks `0x11` (Turbo Speed Data) and `0x14`
+  (Pure Data), not only `0x10`.** An earlier version silently dropped
+  every turbo-loaded block on any real TZX using one -- a large
+  fraction of real commercial tapes, which is the entire reason turbo
+  loaders exist. Found and fixed for the identical reason in the
+  sibling zentools project's own TZX conversion path first; this
+  brings zendis's own loading up to the same standard. Filed as a
+  follow-up alongside T-15 rather than reopening the already-closed
+  T-10.
+
+### Changed
+
+- Now depends on `github.com/ha1tch/zentools` v0.8.0 (previously
+  v0.6.0), for PZX/SZX/RZX parsing support.
+
+## [0.3.5] — 2026-08-31
+
+### Added
+
+- **Tape and snapshot input.** `--tape=FILE` (`.tap`/`.tzx`, auto-detected
+  from the file's own bytes) and `--snapshot=FILE` (`.sna`/`.z80`, v1/v2/v3,
+  auto-detected across 48K and 128K-family alike) load code directly,
+  instead of requiring pre-extraction to a raw binary as a separate step.
+  Exactly one input source is required: a positional raw-binary path,
+  `--tape`, or `--snapshot`.
+  - `--tape`: `--block=N` selects a block by its position in the tape's own
+    block list -- not a header+data pair count, since real tapes (confirmed
+    against an actual commercial release's structure) commonly have bare
+    data blocks with no header at all, for a custom loader that already
+    knows their addresses; those are reachable via `--block` plus an
+    explicit `--org`. `--block-name=NAME` selects by exact header name
+    instead. Neither given, the first Code-type block is used.
+  - `--snapshot`: org defaults to the snapshot's own `PC`. For a
+    128K-family snapshot, banks 5 and 2 are always at `0x4000`/`0x8000` in
+    every normal paging mode; only the top quarter varies by the
+    snapshot's own paging state by default, or `--bank=N` (0-7) to select
+    a specific bank directly, for inspecting one that isn't currently
+    paged in. The +3's special all-RAM paging mode is refused with a
+    clear error rather than guessed at.
+  - `--org` and `--length` apply uniformly across all three input kinds,
+    overriding whatever the source itself provides rather than requiring
+    it.
+  - New package `github.com/ha1tch/zendis/pkg/load`
+    (`FromTAP`/`FromTZX`/`FromTape`, `FromSNA48K`/`FromZ80`/
+    `FromSnapshot48K`, `FromSNA128`/`FromZ80128`/`FromSnapshot128K`,
+    `FromSnapshot`), built on `github.com/ha1tch/zentools`'s format
+    parsers -- exported at the library level, the same as `pkg/render`, for
+    the same reason: an embedder gets the real thing, not a CLI-only
+    capability.
+  - Closes T-10, T-11, T-12.
+
+### Changed
+
+- **`pkg/render`: the loader and every output format, extracted as a
+  real library package**, not CLI-internal logic. `cmd/zendis` is now a
+  127-line, single-function wrapper over it -- the same relationship
+  `pkg/disasm`'s `Decode`/`DecodeTarget` already has with the CLI.
+  `render.Disassembly` bundles a decoded record stream with its label
+  resolution and the inputs that produced them (unexported fields --
+  genuine encapsulation, not just convenience): decode once, render as
+  many times as needed, with `WriteAssemblySource`'s `org`/`z80nTarget`
+  captured once at construction so they can no longer drift from what
+  `DecodeBuffer` actually decoded with, the way two independently-supplied
+  call arguments could. `cmd/zendis` itself now uses it.
+- **CI**: `.github/workflows/test.yml` (native build/vet/test, Linux
+  x86-64 and arm64), `cross-build.yml` (build verification across 17
+  targets, `CGO_ENABLED=0`), and `release.yml` (build, package, and
+  publish all 17 targets on a version tag) -- closely mirroring
+  `github.com/ha1tch/zenas`'s own three workflows, adapted for
+  `cmd/zendis`'s path.
+
+### Fixed
+
+- Found and fixed upstream, in `github.com/ha1tch/zentools` (not this
+  project): `EncodeSNA128` silently produced a malformed, oversized image
+  whenever the paged bank aliased bank 2 or bank 5 -- a genuine, valid
+  hardware scenario. Reported and fixed in zentools v0.6.1.
+
 ## [0.3.1] — 2026-08-30
 
 ### Added

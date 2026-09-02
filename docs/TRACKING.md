@@ -1,6 +1,6 @@
 # zendis — Tracking
 
-Version: 0.3.1 · Last reviewed: 2026-08-30
+Version: 0.3.9 · Last reviewed: 2026-08-31
 
 ## Status
 
@@ -74,15 +74,15 @@ targeted oracle harness (pkg/disasm/decode_ddfd_oracle_test.go) now
 cross-checks the substitution *decision* against zen80's real DD/FD
 dispatch: the mechanical cases (half-register forms, indexed-memory
 addressing, the DDCB rotate sub-form) confirm clean against the
-currently-published zen80 v0.5.5. Both hard-coded exceptions are
+currently-published zen80 v0.5.6. Both hard-coded exceptions are
 independently correct in zendis (confirmed by decode-only assertions
-in the same file) but their live oracle checks currently degrade
-gracefully (recover-and-log for HALT, detect-and-skip for EX DE,HL)
-rather than asserting, since v0.5.5 itself has confirmed bugs on both
--- fixed in the local zen80 clone, not yet in a published release (see
-[[repoman]] memory / the conversation this was found in). Those two
-checks become real assertions once zendis's go.mod bumps to a zen80
-release carrying the fix.
+in the same file), and now their live oracle checks assert directly
+too, not just decode-only: zen80 v0.5.6 carries the fix for both (DD
+76 panicking, DD EB substituting IX into EX DE,HL) that v0.5.5 had --
+zendis's go.mod bumped to it, and both checks turned from
+recover-and-log/detect-and-skip into real assertions, verified passing
+against the real published module, not the local clone this was
+originally found and fixed against.
 
 Status note: substitution-decision boundary verified (exceptions +
 half-register + indexed-memory + DDCB, both DD/IX and FD/IY paths).
@@ -104,4 +104,6 @@ Theme: verification · Priority: P1 · Status: ☐ · Blocks/after: —
 Test coverage is currently 6 hand-written test functions against roughly 950 lines of decode logic across four opcode tables. T-3 and T-4 already flag that the riskiest tables (DD/FD, DDCB/FDCB) lack independent verification; the same underlying gap -- correctness asserted rather than verified -- extends to the decoder as a whole. There's no fuzzing or property-based testing (e.g. "length always matches bytes consumed", "decode never panics on arbitrary input", "every byte sequence produces either a valid instruction or a reported error") despite the decoder being exactly the kind of tabular state machine that benefits from it.
 
 Trigger: identified during the same review as T-05 to T-08; theme matches T-3/T-4 rather than the traversal/cli groups since this is about decoder trust generally, not a specific missing feature.
+
+## formats
 

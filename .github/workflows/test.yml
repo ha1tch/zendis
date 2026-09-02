@@ -1,0 +1,51 @@
+name: test
+
+# Native build, vet, and test on Linux (x86-64 and arm64). Every other target,
+# including macOS and Windows, is cross-compiled from a Linux runner with cgo
+# disabled in cross-build.yml; this is faster and more reliable than waiting on
+# scarce macOS and Windows hosted runners, and zendis has no cgo to test.
+#
+# tools/roundtrip and tools/dialectcheck are deliberately not part of this
+# workflow: they're separate Go modules (own go.mod), not covered by this
+# module's `go build ./...`/`go test ./...`, and dialectcheck specifically
+# needs a C++ toolchain (pasmo/sjasmplus) and, optionally, a locally-supplied
+# SNASM binary that can't be fetched in CI at all (not open source -- see its
+# own bootstrap.go). Both remain manual/local verification steps, same as
+# they've always been.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest      # Linux x86-64
+          - ubuntu-24.04-arm   # Linux arm64
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./... -count=1
