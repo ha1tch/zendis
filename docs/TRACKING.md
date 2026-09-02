@@ -1,6 +1,6 @@
 # zendis — Tracking
 
-Version: 0.3.9 · Last reviewed: 2026-08-31
+Version: 0.4.0 · Last reviewed: 2026-08-31
 
 ## Status
 

@@ -1,10 +1,11 @@
 // Command zendis disassembles Z80/Z80N machine code from a binary
-// file, a tape image (.tap/.tzx), or a 48K snapshot (.sna/.z80). This
-// is a thin CLI wrapper: flag parsing and process exit codes live
-// here, but the actual decode-loop orchestration and every output
-// format are pkg/render's, and tape/snapshot extraction is pkg/load's
-// -- the same relationship pkg/disasm's Decode/DecodeTarget already
-// has with this command.
+// file, a tape image (.tap/.tzx/.pzx), a snapshot (.sna/.z80/.szx), or
+// an RZX recording. This is a thin CLI wrapper: flag parsing, file
+// reading, and process exit codes live here; the actual pipeline
+// (resolving an input source into code+org, then decoding and
+// rendering it) is pkg/api's own Disassemble, exported directly for a
+// caller embedding zendis as a library rather than shelling out to
+// this binary.
 package main
 
 import (
@@ -13,8 +14,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/ha1tch/zendis/pkg/api"
 	"github.com/ha1tch/zendis/pkg/disasm"
-	"github.com/ha1tch/zendis/pkg/load"
 	"github.com/ha1tch/zendis/pkg/render"
 )
 
@@ -37,14 +38,9 @@ func main() {
 
 	flag.Parse()
 
-	var target disasm.Target
-	switch *targetName {
-	case "z80":
-		target = disasm.TargetZ80
-	case "z80n":
-		target = disasm.TargetZ80N
-	default:
-		fmt.Fprintf(os.Stderr, "zendis: unknown --target %q (want z80 or z80n)\n", *targetName)
+	target, err := disasm.ParseTarget(*targetName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zendis: %v\n", err)
 		os.Exit(2)
 	}
 	switch *format {
@@ -114,6 +110,15 @@ func main() {
 		}
 		bankOverride = &b
 	}
+	var blockIndexOverride *int
+	if *blockStr != "" {
+		idx, err := strconv.Atoi(*blockStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zendis: invalid --block %q: %v\n", *blockStr, err)
+			os.Exit(2)
+		}
+		blockIndexOverride = &idx
+	}
 
 	hints := &disasm.Hints{}
 	if *hintsPath != "" {
@@ -131,23 +136,38 @@ func main() {
 		hints = h
 	}
 
-	code, org, err := resolveInput(inputArgs{
-		rawPath:       flagArgOrEmpty(),
-		tapePath:      *tapePath,
-		snapshotPath:  *snapshotPath,
-		recordingPath: *recordingPath,
-		blockStr:      *blockStr,
-		blockName:     *blockName,
-		bank:          bankOverride,
-		org:           orgOverride,
-		length:        lengthOverride,
+	kind, path := api.SourceRaw, flagArgOrEmpty()
+	switch {
+	case *tapePath != "":
+		kind, path = api.SourceTape, *tapePath
+	case *snapshotPath != "":
+		kind, path = api.SourceSnapshot, *snapshotPath
+	case *recordingPath != "":
+		kind, path = api.SourceRecording, *recordingPath
+	}
+	image, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zendis: %v\n", err)
+		os.Exit(1)
+	}
+
+	d, err := api.Disassemble(api.Options{
+		Kind:       kind,
+		Image:      image,
+		Target:     target,
+		Hints:      hints,
+		AutoLabels: *labels,
+		Org:        orgOverride,
+		Length:     lengthOverride,
+		BlockIndex: blockIndexOverride,
+		BlockName:  *blockName,
+		Bank:       bankOverride,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zendis: %v\n", err)
 		os.Exit(1)
 	}
 
-	d := render.NewDisassembly(code, org, target, hints, *labels)
 	exitCode := 0
 	if d.TruncatedTail() {
 		exitCode = 1
@@ -228,76 +248,4 @@ func parseOptionalLength(s string) (*int, error) {
 	}
 	n := int(v)
 	return &n, nil
-}
-
-// inputArgs bundles resolveInput's parameters -- one struct instead of
-// seven positional arguments, given how many of them there are.
-type inputArgs struct {
-	rawPath       string
-	tapePath      string
-	snapshotPath  string
-	recordingPath string
-	blockStr      string
-	blockName     string
-	bank          *int
-	org           *uint16
-	length        *int
-}
-
-// resolveInput reads and extracts code+org from whichever input source
-// was given -- exactly one of args.rawPath/tapePath/snapshotPath/
-// recordingPath is non-empty, already validated by main before this is
-// called.
-func resolveInput(args inputArgs) (code []byte, org uint16, err error) {
-	switch {
-	case args.tapePath != "":
-		image, err := os.ReadFile(args.tapePath)
-		if err != nil {
-			return nil, 0, err
-		}
-		opts := load.TapeOptions{Options: load.Options{Org: args.org, Length: args.length}}
-		if args.blockName != "" {
-			opts.BlockName = args.blockName
-		} else if args.blockStr != "" {
-			idx, err := strconv.Atoi(args.blockStr)
-			if err != nil {
-				return nil, 0, fmt.Errorf("invalid --block %q: %w", args.blockStr, err)
-			}
-			opts.BlockIndex = &idx
-		}
-		return load.FromTape(image, opts)
-
-	case args.snapshotPath != "":
-		image, err := os.ReadFile(args.snapshotPath)
-		if err != nil {
-			return nil, 0, err
-		}
-		opts := load.SnapshotOptions{Options: load.Options{Org: args.org, Length: args.length}, Bank: args.bank}
-		return load.FromSnapshot(image, opts)
-
-	case args.recordingPath != "":
-		image, err := os.ReadFile(args.recordingPath)
-		if err != nil {
-			return nil, 0, err
-		}
-		opts := load.SnapshotOptions{Options: load.Options{Org: args.org, Length: args.length}, Bank: args.bank}
-		return load.FromRZX(image, opts)
-
-	default:
-		code, err := os.ReadFile(args.rawPath)
-		if err != nil {
-			return nil, 0, err
-		}
-		org := uint16(0)
-		if args.org != nil {
-			org = *args.org
-		}
-		if args.length != nil {
-			if *args.length > len(code) {
-				return nil, 0, fmt.Errorf("--length %d exceeds the %d bytes available in %s", *args.length, len(code), args.rawPath)
-			}
-			code = code[:*args.length]
-		}
-		return code, org, nil
-	}
 }

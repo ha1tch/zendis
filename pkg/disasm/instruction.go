@@ -7,6 +7,8 @@
 // zendis uses it to produce mnemonics and operand text instead.
 package disasm
 
+import "fmt"
+
 // Prefix identifies which opcode prefix, if any, introduced an instruction.
 type Prefix int
 
@@ -92,6 +94,24 @@ func (t Target) String() string {
 		return "z80n"
 	default:
 		return "?"
+	}
+}
+
+// ParseTarget parses "z80"/"z80n" into the matching Target -- the
+// reverse of String, for a caller configuring Target from a string
+// (a config file, an environment variable, a caller's own flag)
+// rather than a Go constant. cmd/zendis's own --target flag now uses
+// this instead of duplicating the same two-case switch inline, which
+// is the same reason it's exported: nothing else in this codebase
+// should need a second copy of it either.
+func ParseTarget(s string) (Target, error) {
+	switch s {
+	case "z80":
+		return TargetZ80, nil
+	case "z80n":
+		return TargetZ80N, nil
+	default:
+		return 0, fmt.Errorf("disasm: unknown target %q (want z80 or z80n)", s)
 	}
 }
 

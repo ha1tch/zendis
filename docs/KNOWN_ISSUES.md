@@ -1,6 +1,6 @@
 # zendis — Known Issues / Dormant Guards
 
-Updated: 2026-08-30
+Updated: 2026-09-02
 
 Intentional limits and invariant boundaries live here; the dormant-guards
 table tracks verification that doesn't run in the default test invocation
@@ -167,3 +167,43 @@ second is evidence.
   source into the session's cache, SNasm.exe placed there manually per
   its own non-open-source constraint, none persisted beyond the
   session) -- 52/52 checks passed after all fixes above.
+
+## Recorded decisions for future consumers
+
+### `pkg/api`, for a future GUI disassembler (zenzx)
+
+zendis's own CLI is the only consumer `pkg/api` needs to serve
+correctly right now. A GUI-based disassembler in zenzx, reusing these
+same packages, is expected at some future point -- not yet started,
+no timeline. These are the decisions already made with that future
+consumer in mind, so they don't need re-deciding when that work
+actually begins:
+
+- **`api.Options` is deliberately permissive, not validated.** Fields
+  that don't apply to the chosen `Kind` (e.g. `BlockName` when
+  `Kind == SourceRaw`) are silently ignored, not rejected. This is the
+  right shape for a GUI: it builds `Options` directly from whatever
+  the user picked in the interface, and doesn't need to know or
+  replicate the CLI's own flag-combination rules
+  (`--sym` requires a specific `--format`, `--block`/`--block-name`
+  require `--tape`, `--bank` requires `--snapshot`/`--recording`)
+  first. Those rules still exist, but only in `cmd/zendis/main.go`'s
+  own CLI-specific validation -- correctly, since they're about flag
+  parsing, not about what `Disassemble` itself needs to do its job.
+- **No `api.Validate(Options) error` was added**, considered and
+  explicitly declined for the same reason: it would enforce CLI-shaped
+  rules a GUI consumer, building `Options` from its own controls
+  rather than parsing flag strings, has no use for.
+- **`api.Options.Image` is `[]byte`, never a file path.** This
+  package never touches disk itself, matching `pkg/load`'s own
+  convention -- a GUI (or any other embedder) can hand it bytes from
+  anywhere: a file it opened itself, a network fetch, an in-memory
+  buffer. `cmd/zendis`'s own `main()` is the one place that calls
+  `os.ReadFile`, deliberately kept there rather than inside the
+  library.
+- **`disasm.ParseTarget(string) (Target, error)`** exists for a
+  string-configured caller (a config file, an environment variable);
+  a GUI selecting a target from, say, a dropdown can just use the
+  `disasm.TargetZ80`/`TargetZ80N` constants directly and skip it
+  entirely -- it's there for the case that needs it, not a required
+  step.

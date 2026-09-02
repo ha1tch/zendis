@@ -1,5 +1,47 @@
 # zendis — Changelog
 
+## [0.4.0] — 2026-09-02
+
+### Added
+
+- **`pkg/api`, zendis's own importable entry point.** Until now,
+  `zendis` was usable as a library only in pieces (`pkg/disasm`,
+  `pkg/load`, `pkg/render` are all independently exported), with the
+  orchestration tying them together -- resolving an input source into
+  code+org, then decoding and rendering it -- living unexported inside
+  `cmd/zendis/main.go`. `api.Disassemble(Options) (*render.Disassembly,
+  error)` is that same pipeline, exported directly, for a caller
+  embedding zendis (a tracer, a build tool, a future GUI) rather than
+  shelling out to the compiled binary. `api.ResolveInput` is also
+  exported standalone, for a caller that wants raw `(code, org)`
+  without a full disassembly. Works on `[]byte`, never a file path --
+  matching `pkg/load`'s own convention, so the library never touches
+  disk itself.
+- **`disasm.ParseTarget(string) (Target, error)`**, the reverse of the
+  existing `Target.String()` -- found while auditing what else needed
+  exporting: `Target` is an `int`, unlike the already string-convertible
+  `render.Dialect`, so this parsing only existed as `cmd/zendis`'s own
+  unexported inline switch until now.
+
+### Changed
+
+- `cmd/zendis/main.go` is now a genuinely thin CLI wrapper: flag
+  parsing, file reading, and exit codes stay there; `pkg/api.Disassemble`
+  does the actual work, and `disasm.ParseTarget` replaces the former
+  inline `--target` switch. Verified behaviour-preserving end to end
+  (raw binary, tape, and both former error paths) before trusting the
+  refactor, not just by re-running the existing test suite.
+
+### Documentation
+
+- `README.md`'s Library section gets a new `pkg/api` subsection,
+  positioned first as the recommended entry point.
+- `docs/KNOWN_ISSUES.md` gets a new "Recorded decisions for future
+  consumers" section: the design choices already made for a future
+  GUI-based disassembler in zenzx reusing these packages (`Options`'s
+  deliberate permissiveness, why no `Validate` helper was added), so
+  they don't need re-deciding when that work actually begins.
+
 ## [0.3.9] — 2026-09-02
 
 ### Changed

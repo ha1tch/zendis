@@ -252,6 +252,51 @@ in the listing.
 
 ## Library
 
+### `pkg/api`: the recommended entry point
+
+`pkg/api` is the whole pipeline `cmd/zendis` itself runs -- resolving
+an input source (a raw binary, a tape, a snapshot, or an RZX
+recording) into code+org, then decoding and rendering it -- wrapped
+into one call, for a caller embedding zendis (a tracer, a build tool,
+anything wanting a disassembly without shelling out to the compiled
+binary) rather than duplicating that orchestration itself:
+
+```go
+import "github.com/ha1tch/zendis/pkg/api"
+
+d, err := api.Disassemble(api.Options{
+    Kind:       api.SourceTape,     // or SourceRaw/SourceSnapshot/SourceRecording
+    Image:      tapeBytes,          // already-read bytes, matching pkg/load's own
+                                     // convention -- this package never touches disk
+    Target:     disasm.TargetZ80N,
+    AutoLabels: true,
+})
+d.WriteListing(os.Stdout, true, os.Stderr)
+```
+
+`Options.Kind` states which `pkg/load` function resolves `Image` --
+not content-sniffing auto-detection, since none of the formats are
+reliably distinguishable by content alone without also knowing which
+one the caller means, the same way the CLI's own
+`--tape`/`--snapshot`/`--recording` flags require the caller to name
+the kind. `api.ResolveInput` is also exported directly, for a caller
+that wants the raw `(code, org)` pair without a full `Disassembly` --
+custom analysis, or feeding a different decoder entirely.
+
+`cmd/zendis`'s own `main()` is now a thin wrapper around exactly this:
+flag parsing, reading the chosen file from disk, and exit codes live
+there; `pkg/api.Disassemble` is the one call doing the actual work,
+so a library caller and the CLI can never drift out of sync on what
+"disassemble this" actually means.
+
+A future GUI-based disassembler in zenzx is expected to reuse this
+same package; see `docs/KNOWN_ISSUES.md`'s "Recorded decisions for
+future consumers" section for the design choices already made with
+that consumer in mind (`Options`'s permissiveness, why no `Validate`
+was added, and so on) before re-deciding any of them.
+
+### `pkg/disasm`: the decoder, as a library
+
 The decoder is usable directly as a library:
 
 ```go
