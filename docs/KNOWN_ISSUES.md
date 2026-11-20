@@ -1,6 +1,6 @@
 # zendis — Known Issues / Dormant Guards
 
-Updated: 2026-09-02
+Updated: 2026-11-16
 
 Intentional limits and invariant boundaries live here; the dormant-guards
 table tracks verification that doesn't run in the default test invocation
@@ -33,8 +33,11 @@ second is evidence.
   Two further known-lossy encodings (the undocumented ED-NOP duplicate,
   the undocumented `IM 0/1` duplicate) are checked separately and
   reported as expected mismatches, not failures.
-- **Last exercised:** 2026-08-29, env: sandbox (this session) — 7/7 real
-  cases passed (`unprefixed mix`, `CB rotates and bit ops`, `ED classic`,
+- **Last exercised:** 2026-11-16, env: sandbox, Go 1.26.5, at 0.7.0, at 0.6.0, at 0.5.1 and at 0.5.0 — 8/8
+  passed, after the tool was changed to build the zendis command in
+  zendis's own module (its command-line case had not been able to build
+  since zendis took on zentools). Before that: 2026-08-29, env: sandbox
+  (this session) — 7/7 real cases passed (`unprefixed mix`, `CB rotates and bit ops`, `ED classic`,
   `Z80N extensions`, `DD/FD substitution`, `IXh/IXl and IYh/IYl matrix`,
   `rare-but-documented ED forms`); both known-lossy cases confirmed
   mismatching exactly as documented.

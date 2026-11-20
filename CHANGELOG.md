@@ -1,5 +1,259 @@
 # zendis — Changelog
 
+## [0.8.2] — 2026-11-16
+
+Documents, and the three lines of the flags' help that name one. The
+program's output is 0.8.1's.
+
+### Changed
+
+- **The README is one page** (67 lines; it was 649): what zendis does, a
+  table of it, and where to read on. What it held is in `docs/USAGE.md`
+  (the command: the listing, each kind of input, NEX files, code and
+  data, hints, symbol files, the output formats) and `docs/LIBRARY.md`
+  (the packages and the library call for each option), moved as it was.
+  The flags' help that said "see README" names `docs/USAGE.md`.
+- The README said tapes were `.tap` and `.tzx` and snapshots `.sna` and
+  `.z80`; `.pzx`, `.szx` and `.rzx` recordings are read too, and were
+  before this release.
+
+## [0.8.1] — 2026-11-16
+
+The last pieces of 0.8.0 that were in the command only, as library
+calls. The command's output is the same as 0.8.0's.
+
+### Added
+
+- `disasm.ParseDataRange`: `ADDR:LENGTH[:KIND]`, the form of `--data`.
+- `api.DefaultTarget(kind)`: the Z80N for a NEX file, the Z80 for the
+  rest; what `--target` is when it is not given.
+- `api.WriteParts(w, kind, image)` and `api.ErrOnePart`: `--blocks` for
+  whichever kind of input.
+- A table in the README of each option and its library call.
+
+### Known state
+
+- Tried with zenas 0.16.0 in one process: a program assembled with
+  tags, written as a NEX file by `artifact.Encode`, listed, disassembled
+  with its own names and two data ranges, and that source assembled and
+  encoded to the same NEX file.
+- G-01 ran: 8 of 8. G-02 not run, as for 0.8.0.
+
+## [0.8.0] — 2026-11-16
+
+NEX files as input, and data written as data.
+
+### Added
+
+- **`--nex=FILE`**: disassemble a Spectrum Next executable. By default
+  what is used of the banks in the address space when the program
+  starts (5, 2 and the entry bank), from the bank the entry point is
+  in; the entry point is labelled `nex_entry`; the Z80N instructions
+  are on. `--bank=N`, `--page=N` and `--bank-at=ADDR` take any other
+  bank or 8K page alone, where the program puts it. Library:
+  `api.SourceNEX`, `Options.Bank`/`Page`/`BankAt`, `load.FromNEX`,
+  `load.DescribeNEX`.
+- **`--blocks`**: list the parts of an input and stop -- a tape's
+  blocks with the numbers `--block` takes, a NEX file's banks with
+  where each is and how much of it is used (`load.WriteTapeBlocks`,
+  `load.WriteNEXBanks`, `load.TapeBlocks`).
+- **Data kinds.** A data range is written as `bytes` (`DB` of numbers,
+  as before), `hex` (zenas's `DB 0x 3E 01`), `words` (`DW`), `text`
+  (`DB` of quoted strings) or `fill` (`DS count,value`): a fourth word
+  on a hints file's `data` line, `disasm.DataRange.Kind`.
+- **`--data=ADDR:LENGTH[:KIND]`**, repeatable: a data range without a
+  hints file.
+- **`--as=KIND`** (`api.Options.AsData`): the whole of what is
+  disassembled as data, for a block that holds no code. Ranges of the
+  hints and of `--data` keep their kinds inside it.
+- `render.DataRows`, `render.DataRow`, `render.EffectiveDataKind`,
+  `disasm.ParseDataKind`, `(*disasm.Hints).DataAt`; `data_kind` in the
+  JSON form.
+
+### Changed
+
+- **Labels inside a data range are declared.** A name from the hints or
+  a symbol file that fell inside a data range was left out of the
+  source; a row now ends at it and the label stands ahead of the next.
+- **Data in re-assemblable source is 16 bytes a line.** A range was one
+  `DB` line however long, 6912 numbers for a screen.
+- **Overlapping data ranges**: the range given first wins, as it did,
+  and the other now goes on after it; it used to be lost from the first
+  one's start on.
+- A comment on an address inside a data range is printed on the row
+  that starts there; only the range's first address was looked at.
+
+### Known state
+
+- Checked by assembling: every kind back to the same bytes with zenas
+  and with sjasmplus 1.24.1; `--nex` source of three NEX files (one
+  built by zenas, two sjasmplus-built examples of one and two banks)
+  back to the same bytes, and the zenas one back to the same NEX file
+  with `zenas build --nex`.
+- `--format=pasmo` and `--format=snasm` write every kind as bytes
+  (T-20).
+- A NEX file's screens, palette and copper code are not read, and
+  banks are taken one at a time (T-21).
+- G-01 ran: 8 of 8. G-02 (`tools/dialectcheck`) was not run: it builds
+  pasmo and sjasmplus from source. Its sjasmplus half was covered by
+  hand for the data kinds, as above; pasmo output is unchanged but for
+  the 16-byte `DB` lines.
+
+## [0.7.0] — 2026-11-16
+
+### Changed
+
+- **`pkg/symfile` is zentools' now**
+  (`github.com/ha1tch/zentools/pkg/symfile`, zentools 0.15.0), and this
+  module's copy is gone. zenas uses the same package from its 0.14.0,
+  so `assembler.ExportSymbols` hands an assembled program's symbols
+  straight to the `symfile.Table` a disassembly takes its names from;
+  0.6.0 needed a map written to a buffer in between. Closes T-19.
+  Anything that imported `github.com/ha1tch/zendis/pkg/symfile` changes
+  the import path; the names in it are the same.
+- **zentools v0.8.6 to v0.15.0.** The loaders' tests pass unchanged.
+
+### Known state
+
+- Tried with zenas 0.14.0 in one process, as the README shows it:
+  assemble in memory, add the result's symbols to a table, disassemble
+  the bytes with the program's names.
+- G-01 ran: 8 of 8.
+
+## [0.6.0] — 2026-11-16
+
+The symbol-file features as a library, for a program that embeds zendis.
+The command's output is the same as 0.5.2's.
+
+### Added
+
+- **`symfile.Table`**: the names of one or more symbol files, by
+  address, built once and read as often as needed (`NewTable`,
+  `AddFile`, `Add`, `Label`, `Constant`, `Name`, `Labels`, `Constants`,
+  `Len`), and `symfile.Identifier`.
+- **`api.Options.Symbols`**: a `*symfile.Table` for `api.Disassemble`,
+  which now does what `--symbols` did in `cmd/zendis`: labels for
+  addresses the hints do not name, constants for branch targets outside
+  the code. `api.WithSymbols` is the first half on its own, for a caller
+  that builds a `render.Disassembly` directly. Neither changes the
+  caller's hints or the table.
+- **`(*render.Disassembly).WriteCSpectMap`**: what `--map` writes.
+
+### Changed
+
+- `cmd/zendis` no longer has symbol logic of its own: it reads the
+  files into a table and sets the option.
+
+### Known state
+
+- Tried with zenas 0.13.0 in one process: a program assembled in
+  memory, its map written to a buffer, read into a table, and the
+  assembled bytes disassembled with the program's own names and the
+  name of a ROM routine it calls. The README has the code.
+- `pkg/symfile` exists twice, here and in zenas, kept in step by hand;
+  an embedder of both passes names between them as a map in a buffer
+  (T-19).
+
+## [0.5.2] — 2026-11-16
+
+Documents and one message; no change to what is decoded or written.
+
+### Fixed
+
+- **`README.md` and the `--sym` error for `--format=snasm` still said
+  SNASM's `-map` output was "a different kind of artifact" that zendis
+  did not implement.** Since 0.5.0 `--map` writes that format's
+  symbols. Both now say so.
+- **`README.md`'s library section had no entry for `pkg/symfile`.**
+
+### Known state
+
+- `docs/WAVE_TRACKING.md` does not pass `repoman waveprogress --check`
+  with gorepoman 0.16.0, and did not at 0.4.0 either: that version
+  counts a partly done item as a half and writes its own summary line
+  for each wave, where the document has hand-written ones that say why
+  an item is open. It was left as it is: regenerating it replaces those
+  lines.
+- zenas assembles `LDIRSCALE` (`ED B6`) with `--next`; zendis does not
+  decode it under `--target=z80n` and shows the two bytes as undefined
+  (the re-assemblable formats write them as `DB`, so a round trip keeps
+  the bytes). Which of the two is right about the Next has not been
+  settled here (T-18).
+
+## [0.5.1] — 2026-11-16
+
+### Changed
+
+- **A constant names a branch target outside the code.** With a symbol
+  file that tells constants from labels (a CSpect map, a z88dk map), a
+  `CALL` or jump to an address no line starts at takes the name of a
+  constant with that value: a ROM routine is usually an `EQU` in the
+  program's source, and came out as `L229B`. Constants still never name
+  a line of the code itself. `symfile.Constants` is the library call.
+- **`symfile.WriteCSpectMap` gives a constant without a physical address
+  its offset in an 8K page**, which is what sjasmplus writes
+  (`0000229B 0000029B 01 BORDER`), and not its whole value. zendis's own
+  `--map` writes labels only and is unchanged.
+
+### Known state
+
+- zenas 0.12.0 writes the same map format with `--map`; `pkg/symfile` is
+  the same code in both and is kept in step by hand. A program assembled
+  by zenas with `--map`, disassembled with that map and assembled again
+  is the same bytes, and a map zendis wrote is read back by zenas's
+  `--symbols`.
+- G-01 ran again: 8 of 8. G-02 was not run (as at 0.5.0).
+
+## [0.5.0] — 2026-11-16
+
+Symbol files of other tools, in and out.
+
+### Added
+
+- **`--symbols=<path>`**: names for addresses from a CSpect map (SNASM's
+  `-map`, sjasmplus's `CSPECTMAP`), a pasmo or zenas `.sym`, an sjasmplus
+  `--sym` file or a z88dk `.map`. The format is told from the file's
+  first line; `--symbols-format` names it. May be given more than once.
+  A hints-file label wins over a symbol file; constants a format marks
+  as such are not used as labels; names are made fit for an assembler
+  (`START@LOOP` becomes `START_LOOP`).
+- **`--map=<path>`**: the disassembly's labels as a CSpect map file, for
+  its debugger's `-map` option, with any `--format`. Physical addresses
+  are those of the Next's memory as a program finds it, the same as
+  sjasmplus writes for its `ZXSPECTRUMNEXT` device.
+- **`pkg/symfile`**: the library behind both: `Parse`, `ParseFormat`,
+  `Labels`, `WriteCSpectMap`, `FromLabels`, `NextPhys`.
+
+### Fixed
+
+- **A branch to an address outside the disassembled lines made the
+  re-assemblable output fail to assemble**: `CALL L229B` (a ROM routine)
+  or a jump into the middle of what was decoded as one instruction used
+  a label the source never defined. Such labels are now defined with an
+  `EQU` ahead of `ORG`, in address order, in all four re-assemblable
+  dialects. It was there since generated labels were added and was not
+  in the register; every program that calls the ROM was affected.
+- **Guard G-01 (`tools/roundtrip`) could not build the zendis command**
+  since zendis began to depend on zentools: the tool built it through
+  its own module, whose `go.sum` has none of zentools' sums. It now
+  builds it in zendis's module. The guard's seven decoder cases were not
+  affected; its command-line case had not run since 2026-08-29.
+
+### Known state
+
+- A 17.8 KB Next program (ZenZX's gallop example) assembled with zenas
+  0.11.2 `--sym`, disassembled with `--symbols` and `--format=zenas` and
+  assembled again is the same file byte for byte; a small program with
+  a ROM call and a data table is too, through zenas and through
+  sjasmplus 1.24.1. The three text maps that come with CSpect 4.5.1.0
+  are read (77, 121 and 156 labels).
+- G-01 ran: 8 of 8. G-02 (`tools/dialectcheck`, pasmo, sjasmplus and
+  SNASM) was not run for this release: it downloads and builds pasmo and
+  sjasmplus. The new `EQU` lines were assembled by zenas and sjasmplus
+  only; pasmo and SNASM have not seen them.
+- A map written by `--map` has not been loaded into CSpect, and the
+  z88dk reader has not read a file z88dk made (T-17).
+
 ## [0.4.0] — 2026-09-02
 
 ### Added

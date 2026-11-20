@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/ha1tch/zendis/pkg/disasm"
+	"github.com/ha1tch/zentools/pkg/symfile"
 )
 
 // Disassembly bundles a decoded record stream with its label
@@ -97,4 +98,12 @@ func (d *Disassembly) WriteJSON(w io.Writer) error {
 // ready for WritePasmoSym or WriteSjasmplusSym.
 func (d *Disassembly) Symbols() map[string]uint16 {
 	return CollectSymbols(d.labelFor, d.hints)
+}
+
+// WriteCSpectMap writes the same symbols as a CSpect map file, the kind
+// its debugger loads with -map: every one a label, with the physical
+// address the Next's memory gives it when a program starts
+// (symfile.NextPhys).
+func (d *Disassembly) WriteCSpectMap(w io.Writer) error {
+	return symfile.WriteCSpectMap(w, symfile.FromLabels(d.Symbols()))
 }

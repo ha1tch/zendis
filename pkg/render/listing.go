@@ -8,10 +8,11 @@ import (
 )
 
 // WriteListing renders the default address+hex+mnemonic form to w.
-// Hints-marked data records are chunked into 4-byte rows -- the same
-// width as the widest instruction -- so the hex column stays aligned
-// throughout the listing; the trailing truncated case keeps its
-// original one-line-however-long form unchanged. hints may be nil
+// Hints-marked data records are written by their kind (DataRows), in
+// zenas's directives: numbers in 4-byte rows -- the same width as the
+// widest instruction -- so the hex column stays aligned, strings in
+// rows of up to 16 bytes, a fill as one DS row. The trailing truncated
+// case keeps its original one-line-however-long form unchanged. hints may be nil
 // (treated as empty).
 //
 // When warnZ80N is set, an undefined opcode that matches a Z80N
@@ -46,18 +47,10 @@ func WriteListing(w io.Writer, records []Record, labelFor map[uint16]string, hin
 			fmt.Fprintf(w, "%04X:  %-11s DB %s\n", rec.Address, hexDump(rec.Bytes), hexList(rec.Bytes))
 			continue
 		}
-		for i := 0; i < len(rec.Bytes); i += 4 {
-			end := i + 4
-			if end > len(rec.Bytes) {
-				end = len(rec.Bytes)
-			}
-			chunk := rec.Bytes[i:end]
-			chunkAddr := rec.Address + uint16(i)
-			line := fmt.Sprintf("%04X:  %-11s DB %s", chunkAddr, hexDump(chunk), hexList(chunk))
-			if i == 0 {
-				if c, ok := hints.Comments[rec.Address]; ok {
-					line += "  ; " + c
-				}
+		for _, row := range DataRows(rec, DialectZenas, true, nil) {
+			line := fmt.Sprintf("%04X:  %-11s %s", row.Address, rowHex(row), row.Text)
+			if c, ok := hints.Comments[row.Address]; ok {
+				line += "  ; " + c
 			}
 			fmt.Fprintln(w, line)
 		}

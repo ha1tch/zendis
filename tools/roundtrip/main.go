@@ -400,7 +400,12 @@ func indent(s string) string {
 // hints parsing, label/comment resolution, or format dispatch.
 func checkCLIPlainFormat() (ok bool, detail string) {
 	zendisBin := filepath.Join(os.TempDir(), "zendis_roundtrip_check")
-	build := exec.Command("go", "build", "-o", zendisBin, "github.com/ha1tch/zendis/cmd/zendis")
+	// Built in zendis's own module, two folders up, and not through this
+	// one's replace directive: this module's go.sum does not have the sums of
+	// what zendis itself depends on (zentools, since zendis 0.3.x), and the
+	// build failed for want of them from then until this was changed.
+	build := exec.Command("go", "build", "-o", zendisBin, "./cmd/zendis")
+	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
 		return false, fmt.Sprintf("  failed to build the zendis CLI: %v\n%s", err, out)
 	}

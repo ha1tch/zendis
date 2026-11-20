@@ -28,7 +28,7 @@ entry 0x8100
 	if h.Comments[0x8010] != "initialize the score table" {
 		t.Errorf("Comments[0x8010] = %q, want the full trailing text", h.Comments[0x8010])
 	}
-	if len(h.Data) != 2 || h.Data[0] != (DataRange{0x9000, 0x20}) || h.Data[1] != (DataRange{0x9100, 32}) {
+	if len(h.Data) != 2 || h.Data[0] != (DataRange{Start: 0x9000, Length: 0x20}) || h.Data[1] != (DataRange{Start: 0x9100, Length: 32}) {
 		t.Errorf("Data = %+v, want [{0x9000 0x20} {0x9100 32}]", h.Data)
 	}
 	if len(h.Entry) != 1 || h.Entry[0] != 0x8100 {

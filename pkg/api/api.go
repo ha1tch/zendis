@@ -10,11 +10,15 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"sort"
 
 	"github.com/ha1tch/zendis/pkg/disasm"
 	"github.com/ha1tch/zendis/pkg/load"
 	"github.com/ha1tch/zendis/pkg/render"
+	"github.com/ha1tch/zentools/pkg/symfile"
 )
 
 // SourceKind identifies which pkg/load function Options.Image should
@@ -38,7 +42,40 @@ const (
 	// SourceRecording resolves Image via load.FromRZX (the first
 	// embedded snapshot in an RZX input-recording file).
 	SourceRecording
+	// SourceNEX resolves Image via load.FromNEX: a Spectrum Next
+	// executable. Bank, Page and BankAt choose a part of it.
+	SourceNEX
 )
+
+// DefaultTarget is the CPU a source of this kind is for when the caller
+// has no reason to say otherwise: the Z80N for a NEX file, which runs on
+// a Spectrum Next only, and the Z80 for the rest. Options.Target's zero
+// value is the Z80 whatever the kind; this is what the command uses for
+// --target when it is not given.
+func DefaultTarget(kind SourceKind) disasm.Target {
+	if kind == SourceNEX {
+		return disasm.TargetZ80N
+	}
+	return disasm.TargetZ80
+}
+
+// ErrOnePart is WriteParts' error for a source that has nothing to list.
+var ErrOnePart = errors.New("api: this kind of input is one part; Org and Length (and Bank for a 128K snapshot) choose what is taken of it")
+
+// WriteParts lists the parts of an input that has several, with what
+// each of the options that choose one takes: a tape's blocks
+// (BlockIndex, BlockName) and a NEX file's banks (Bank, Page, BankAt).
+// It is the command's --blocks. load.TapeBlocks and load.DescribeNEX
+// return the same as data. The other kinds give ErrOnePart.
+func WriteParts(w io.Writer, kind SourceKind, image []byte) error {
+	switch kind {
+	case SourceTape:
+		return load.WriteTapeBlocks(w, image)
+	case SourceNEX:
+		return load.WriteNEXBanks(w, image)
+	}
+	return ErrOnePart
+}
 
 // Options configures a single ResolveInput or Disassemble call.
 // Mirrors the CLI flags cmd/zendis's own main() exposes; fields not
@@ -65,6 +102,15 @@ type Options struct {
 	// AutoLabels replaces JP/JR/CALL/DJNZ target addresses with
 	// generated labels (Lxxxx) where Hints doesn't already name one.
 	AutoLabels bool
+	// Symbols is the names of other tools' symbol files (a CSpect map, a
+	// zenas or pasmo .sym, an sjasmplus --sym file, a z88dk .map), made
+	// with symfile.NewTable and its AddFile. Its labels name addresses
+	// that Hints does not already name; its constants name branch targets
+	// that lie outside the code (a ROM routine the program's source
+	// defined with EQU). nil is no symbols. The table is only read, so
+	// one table can serve any number of calls: a debugger builds it once
+	// and disassembles whatever part of memory it is showing.
+	Symbols *symfile.Table
 
 	// Org overrides the source's own load address/PC when non-nil.
 	// Meaningful for every Kind: the explicit start address for
@@ -86,8 +132,21 @@ type Options struct {
 	// Bank selects a specific 128K-family RAM bank (0-7) to appear at
 	// 0xC000-0xFFFF, overriding the source's own paging state.
 	// SourceSnapshot/SourceRecording only; meaningless for a 48K
-	// source.
+	// source. For SourceNEX it is one of the file's 16 KB banks
+	// (0-111), taken alone, at BankAt.
 	Bank *int
+	// Page selects one 8 KB page (0-223) of a NEX file, taken alone, at
+	// BankAt. SourceNEX only; not given with Bank.
+	Page *int
+	// BankAt is the address of the first byte of the Bank or Page of a
+	// NEX file: a multiple of 0x2000. nil is 0xC000. SourceNEX only.
+	BankAt *uint16
+
+	// AsData, when non-nil, writes everything that Hints does not mark
+	// as data of this kind, and decodes no instruction: for a block
+	// that is a table, a screen, text. Data ranges of Hints keep their
+	// own kinds inside it.
+	AsData *disasm.DataKind
 }
 
 // ResolveInput extracts (code, org) from opts.Image per opts.Kind --
@@ -113,6 +172,10 @@ func ResolveInput(opts Options) (code []byte, org uint16, err error) {
 	case SourceRecording:
 		lopts := load.SnapshotOptions{Options: load.Options{Org: opts.Org, Length: opts.Length}, Bank: opts.Bank}
 		return load.FromRZX(opts.Image, lopts)
+
+	case SourceNEX:
+		lopts := load.NEXOptions{Options: load.Options{Org: opts.Org, Length: opts.Length}, Bank: opts.Bank, Page: opts.Page, BankAt: opts.BankAt}
+		return load.FromNEX(opts.Image, lopts)
 
 	case SourceRaw:
 		code := opts.Image
@@ -144,9 +207,126 @@ func Disassemble(opts Options) (*render.Disassembly, error) {
 	if err != nil {
 		return nil, err
 	}
-	hints := opts.Hints
-	if hints == nil {
-		hints = &disasm.Hints{}
+	hints := WithSymbols(opts.Hints, opts.Symbols)
+	if opts.Kind == SourceNEX && opts.Bank == nil && opts.Page == nil {
+		// Only in the view the program starts with: another bank at the
+		// same address is not where the entry point is.
+		nameEntryPoint(hints, opts.Image, code, org)
 	}
-	return render.NewDisassembly(code, org, opts.Target, hints, opts.AutoLabels), nil
+	if opts.AsData != nil && len(code) > 0 {
+		// Last in the list: a range of the hints is found first.
+		length := len(code)
+		if length > 0xFFFF {
+			length = 0xFFFF
+		}
+		hints.Data = append(append([]disasm.DataRange{}, hints.Data...),
+			disasm.DataRange{Start: org, Length: uint16(length), Kind: *opts.AsData})
+	}
+	d := render.NewDisassembly(code, org, opts.Target, hints, opts.AutoLabels)
+	if opts.Symbols == nil {
+		return d, nil
+	}
+
+	// Branch targets that no line starts at and nothing has named: where a
+	// constant has that value, it is the name. Then once more, with those.
+	starts := map[uint16]bool{}
+	for _, rec := range d.Records() {
+		starts[rec.Address] = true
+	}
+	named := map[string]bool{}
+	for _, name := range hints.Labels {
+		named[name] = true
+	}
+	added := false
+	for _, rec := range d.Records() {
+		if rec.Instr == nil {
+			continue
+		}
+		t, ok := rec.Instr.BranchTarget()
+		if !ok || starts[t] {
+			continue
+		}
+		name, isConstant := opts.Symbols.Constant(t)
+		if _, taken := hints.Labels[t]; taken || !isConstant || named[name] {
+			continue
+		}
+		hints.Labels[t] = name
+		named[name] = true
+		added = true
+	}
+	if added {
+		d = render.NewDisassembly(code, org, opts.Target, hints, opts.AutoLabels)
+	}
+	return d, nil
+}
+
+// NEXEntryLabel is the name the entry point of a NEX file gets when
+// neither the hints nor a symbol file has one for it.
+const NEXEntryLabel = "nex_entry"
+
+// nameEntryPoint labels the address a NEX file starts at, when it is in
+// what is being disassembled and has no name yet.
+func nameEntryPoint(hints *disasm.Hints, image, code []byte, org uint16) {
+	info, err := load.DescribeNEX(image)
+	if err != nil || info.PC == 0 {
+		return
+	}
+	if int(info.PC) < int(org) || int(info.PC) >= int(org)+len(code) {
+		return
+	}
+	if _, named := hints.Labels[info.PC]; named {
+		return
+	}
+	for _, name := range hints.Labels {
+		if name == NEXEntryLabel {
+			return
+		}
+	}
+	hints.Labels[info.PC] = NEXEntryLabel
+}
+
+// WithSymbols returns hints with the labels of a symbol table added: a
+// copy, so neither argument is changed. A label the hints already have
+// for an address stays, and a table name the hints use for another
+// address gets its address appended. Either argument may be nil.
+// Disassemble calls this itself for Options.Symbols; it is exported for
+// a caller that builds a render.Disassembly directly.
+func WithSymbols(hints *disasm.Hints, table *symfile.Table) *disasm.Hints {
+	out := &disasm.Hints{Labels: map[uint16]string{}}
+	if hints != nil {
+		*out = *hints
+		out.Labels = make(map[uint16]string, len(hints.Labels))
+		for addr, name := range hints.Labels {
+			out.Labels[addr] = name
+		}
+	}
+	if out.Comments == nil {
+		out.Comments = map[uint16]string{}
+	}
+	if table == nil {
+		return out
+	}
+	named := map[string]bool{}
+	for _, name := range out.Labels {
+		named[name] = true
+	}
+	labels := table.Labels()
+	addrs := make([]int, 0, len(labels))
+	for addr := range labels {
+		addrs = append(addrs, int(addr))
+	}
+	sort.Ints(addrs)
+	for _, a := range addrs {
+		addr := uint16(a)
+		if _, taken := out.Labels[addr]; taken {
+			continue
+		}
+		name := labels[addr]
+		if named[name] {
+			name = fmt.Sprintf("%s_%04X", name, addr)
+		}
+		named[name] = true
+		out.Labels[addr] = name
+	}
+	return out
 }

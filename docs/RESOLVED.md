@@ -5,6 +5,17 @@ verbatim as it stood at closure, stamped with the closing version and
 date. `CHANGELOG.md` says what shipped; this says what was wrong and
 how it was resolved — the two reference, never duplicate, each other.
 
+## [0.7.0] T-19 — pkg/symfile exists in zendis and in zenas: one shared home is needed (v0.7.0, 2026-11-16)
+
+Theme: embedding · closed 0.7.0 · 2026-11-16
+- **Trigger:** 0.6.0, making the symbol-file features usable from a program that embeds zendis and zenas together (ZenZX).
+- **Problem:** `pkg/symfile` is the same code in zendis and in zenas, copied, because zendis's round-trip guard depends on zenas and a dependency the other way would be a cycle of modules. The two copies are kept in step by hand, and to Go they are different packages: zenas's `symfile.Symbol` cannot be handed to zendis's `symfile.Table`. An embedder passes names between them as a CSpect map in a buffer, which works and costs a format round trip.
+- **Fix:** one home that both already depend on. zentools is the candidate (zendis requires it for tape and snapshot loading, zenas for packaging): `zentools/pkg/symfile`, with both projects importing it and their copies removed.
+- **Needs:** a zentools release with the package, tagged, before either project can depend on it.
+- **Done when:** there is one `symfile` package, and an embedder passes `[]symfile.Symbol` from zenas's `assembler.ExportSymbols` straight to a `symfile.Table`.
+
+Cross-ref: CHANGELOG 0.7.0.
+
 ## [0.3.6] T-15 — No RZX input-recording support -- can't disassemble code straight from a TAS/competition recording (v0.3.6, 2026-08-31)
 
 Theme: formats · closed 0.3.6 · 2026-08-31

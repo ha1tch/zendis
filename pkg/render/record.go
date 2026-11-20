@@ -34,6 +34,7 @@ type Record struct {
 	Bytes     []byte
 	Instr     *disasm.Instruction // nil for a data record
 	Truncated bool                // data record only: true for the trailing case, false for a marked range
+	Kind      disasm.DataKind     // data record only: how the range asked to be written
 }
 
 // DecodeBuffer performs a linear sweep of code, starting at org under
@@ -58,15 +59,15 @@ func DecodeBuffer(code []byte, org uint16, target disasm.Target, hints *disasm.H
 	addr := org
 	offset := 0
 	for offset < len(code) {
-		if end, ok := hints.DataRangeAt(addr); ok {
-			length := int(end) - int(addr)
+		if dr, ok := hints.DataAt(addr); ok {
+			length := int(dr.Length)
 			if length <= 0 {
 				length = 1 // malformed/zero-length range: don't spin forever
 			}
 			if offset+length > len(code) {
 				length = len(code) - offset
 			}
-			records = append(records, Record{Address: addr, Bytes: code[offset : offset+length]})
+			records = append(records, Record{Address: addr, Bytes: code[offset : offset+length], Kind: dr.Kind})
 			addr += uint16(length)
 			offset += length
 			continue

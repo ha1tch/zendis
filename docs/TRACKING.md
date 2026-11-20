@@ -1,6 +1,6 @@
 # zendis — Tracking
 
-Version: 0.4.0 · Last reviewed: 2026-08-31
+Version: 0.8.2 · Last reviewed: 2026-11-16
 
 ## Status
 
@@ -11,6 +11,11 @@ Version: 0.4.0 · Last reviewed: 2026-08-31
 | T-06 | No control-flow-guided disassembly -- no traversal from entry points following JP/CALL/JR targets | traversal | P2 | ☐ | — |
 | T-07 | No symbol-file input or annotation mechanism for user-supplied names and comments | cli | P2 | ◐ | — |
 | T-09 | No fuzzing or property-based tests for decoder correctness | verification | P1 | ☐ | — |
+| T-16 | Symbols name only branch targets: data operands stay numbers | cli | P2 | ☐ | — |
+| T-17 | Symbol files: physical addresses unused, two of CSpect's formats unread, CSpect and z88dk not tried | cli | P3 | ☐ | — |
+| T-18 | LDIRSCALE (ED B6): zenas assembles it, zendis does not decode it | decoder | P3 | ☐ | — |
+| T-20 | Data kinds: pasmo and SNASM get numbers only | cli | P3 | ☐ | — |
+| T-21 | NEX input: one bank at a time; screens, palette and copper not read | cli | P3 | ☐ | — |
 
 ## cli
 
@@ -34,11 +39,56 @@ ways: unit tests (hints_test.go, main_test.go) and a permanent
 CLI-level round-trip check in tools/roundtrip that builds the real
 zendis binary, runs it with a hints file exercising all three
 directives, and confirms the `--format=plain` output reassembles
-through zenas to the exact original bytes.
+through zenas to the exact original bytes. 0.5.0 adds `--symbols`,
+which reads other tools' symbol files into the same labels
+(`pkg/symfile`); what that leaves out is T-16 and T-17.
 
 Trigger: identified during the same review as T-05/T-06; distinct from T-2 in that T-2 is about generating labels, this is about consuming and preserving user-supplied ones.
 
+### T-16. Symbols name only branch targets: data operands stay numbers
+
+Theme: cli · Priority: P2 · Status: ☐
+
+- **Trigger:** 0.5.0, `--symbols`. A symbol file names data as well as code (`table`, `SPRITEDATA`, a system variable), and the disassembly uses a name only where JP, JR, CALL or DJNZ go to it: `LD HL,0x800F` stays a number although `table` is at 0x800F and is declared on its own line.
+- **Why it is not simply done:** a 16-bit operand is not always an address (`LD BC,0x8000` as a count), so naming every operand that equals a symbol would put wrong names in. In a re-assemblable format the bytes come out the same either way; in a listing it misleads.
+- **Fix:** name the operands that are addresses by their form first (`LD A,(nn)`, `LD (nn),HL`, `LD HL,(nn)`), then immediates under an option, and only for symbols that came from a file or the hints, never generated ones. Port numbers and 8-bit constants from a map's EQUs are a further step.
+- **Done when:** a program disassembled with its own symbol file shows its data labels in the operands that address them, and the round trip through zenas is still byte-identical.
+
+### T-17. Symbol files: physical addresses unused, two of CSpect's formats unread, CSpect and z88dk not tried
+
+Theme: cli · Priority: P3 · Status: ☐
+
+- **Trigger:** 0.5.0, `--symbols` and `--map`.
+- **Not there:** the physical address of a cspect map is read and kept (`symfile.Symbol.Phys`) and nothing uses it: a symbol in a page that is not in the default paging is taken by its 16-bit address alone, and two symbols in different pages at the same address collide (the first by name wins). `--map` writes every label with the default paging, whatever `--bank` or a snapshot's own paging says. The `[FILES]` and `[LINES]` sections of SNASM's maps (source lines for addresses) are skipped. Boriel BASIC's map and Pasta/80's listing, which CSpect also loads, are not read: no file of either was at hand to take the format from.
+- **Not tried:** a map written by `--map` loaded into CSpect; a `.map` written by z88dk (the reader follows the documented shape); the `EQU` lines for outside branch targets in pasmo and SNASM (guard G-02 was not run at 0.5.0).
+- **Done when:** a zendis map has been seen working in CSpect's debugger, the z88dk reader has read a real file, and G-02 has run with a case that has an outside branch target.
+
+### T-20. Data kinds: pasmo and SNASM get numbers only
+
+Theme: cli · Priority: P3 · Status: ☐
+
+0.8.0 writes a data range as words (DW), text (DB of strings) or a fill (DS count,value) for zenas and sjasmplus, where each kind was assembled back to the same bytes. For --format=pasmo and --format=snasm every kind is written as DB of numbers (render.EffectiveDataKind): neither assembler was at hand to try its DW, DS and string syntax, and a wrong guess assembles to wrong bytes without an error. To do: try them with tools/dialectcheck (pasmo) and with SNASM, then let EffectiveDataKind pass the kinds that hold.
+
+Trigger: found while adding data kinds for 0.8.0.
+
+### T-21. NEX input: one bank at a time; screens, palette and copper not read
+
+Theme: cli · Priority: P3 · Status: ☐
+
+--nex (0.8.0) disassembles the view a NEX program starts with, or one bank or 8K page at an address given with --bank-at. Not there: a view made of several banks the program pages in (an MMU map given on the command line, a bank per slot); the file's loading screens, palette and copper code, which load.DescribeNEX does not list; physical addresses of a CSpect map to name things in the bank they are in (T-17).
+
+Trigger: scope left out of --nex in 0.8.0.
+
 ## decoder
+
+### T-18. LDIRSCALE (ED B6): zenas assembles it, zendis does not decode it
+
+Theme: decoder · Priority: P3 · Status: ☐
+
+- **Trigger:** 0.5.2, tidying zenas and zendis together. zenas (0.11.x on) assembles `LDIRSCALE` as `ED B6` under `--next` and lists it among 30 Z80N instructions; zendis decodes 29 and leaves `ED B6` undefined under `--target=z80n`.
+- **What is known:** sjasmplus 1.24.1 rejects `LDIRSCALE`; CSpect 4.5.1.0's ReadMe, which lists the Z80N opcodes, does not have it; zen80 0.5.6, the CPU core, does not execute it. zenas's own note says it decodes as a plain repeating copy on the machine. No Next core source or hardware was consulted for this item.
+- **Effect:** none on bytes: a re-assemblable format writes `DB 0xED,0xB6` and the round trip is exact. A listing shows `???` where zenas's source had a mnemonic.
+- **Done when:** it is settled whether current Next cores have the instruction, and zenas, zendis and zen80 agree: either zendis decodes it and zen80 executes it, or zenas stops offering it.
 
 ## traversal
 
@@ -48,7 +98,7 @@ Theme: traversal · Priority: P1 · Status: ◐ · Blocks/after: —
 
 zendis disassembles linearly from byte zero as if every byte were code. A binary containing embedded data tables, string literals, or other non-code regions will have those bytes "decoded" as plausible-looking but meaningless instructions rather than flagged as data, since there's currently no mechanism -- heuristic or user-supplied -- for marking a byte range as non-code.
 
-Status note: implemented via T-07's hints file (`data <addr> <length>` directive) -- the user-supplied half of the "heuristic or user-supplied" framing above; no heuristic (data inferred without a hint) was attempted. The CLI's decode loop checks every address against the hints file's data ranges before attempting to decode, and renders a match as DB lines chunked into 4-byte rows (matching the widest instruction, so the listing's hex column stays aligned) rather than mis-decoding it. Unit-tested (main_test.go's TestPrintListing_HintsIntegration) and proven to round-trip through zenas as part of T-07's CLI-level round-trip check (tools/roundtrip).
+Status note: implemented via T-07's hints file (`data <addr> <length>` directive) -- the user-supplied half of the "heuristic or user-supplied" framing above; no heuristic (data inferred without a hint) was attempted. The CLI's decode loop checks every address against the hints file's data ranges before attempting to decode, and renders a match as DB lines chunked into 4-byte rows (matching the widest instruction, so the listing's hex column stays aligned) rather than mis-decoding it. Unit-tested (main_test.go's TestPrintListing_HintsIntegration) and proven to round-trip through zenas as part of T-07's CLI-level round-trip check (tools/roundtrip). 0.8.0 adds the kinds a range is written in (bytes, hex, words, text, fill), `--data` for a range without a hints file and `--as` for a whole block; still no heuristic.
 
 Trigger: identified while reviewing the decoder against what a complete disassembler needs, comparing current scope against the original T-1 to T-4 items filed during initial implementation scoping.
 

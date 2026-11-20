@@ -1,4 +1,6 @@
 /zendis
+# Build output (the Makefile writes build/zendis here)
+/build/
 *.test
 *.out
 .ed-journal.json

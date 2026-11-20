@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ha1tch/zendis/pkg/disasm"
@@ -110,8 +111,59 @@ func WriteAssemblySource(w io.Writer, records []Record, labelFor map[uint16]stri
 		}
 	}
 
-	fmt.Fprintf(target, "%sORG 0x%04X\n", indent, org)
+	// A branch can go to an address no line of this source starts at: a
+	// ROM routine, another block of the program, the middle of what was
+	// decoded as one instruction. Its label has to be defined all the
+	// same, or the source does not assemble; an EQU ahead of the code
+	// does it, in address order.
+	// A data record is written in rows, cut at the labelled addresses
+	// inside it, so a table of a symbol file is declared where it is.
+	labelled := func(a uint16) bool { _, ok := labelFor[a]; return ok }
+	dataRows := map[int][]DataRow{}
+	starts := make(map[uint16]bool, len(records))
+	for i, rec := range records {
+		starts[rec.Address] = true
+		if rec.Instr == nil && !rec.Truncated {
+			rows := DataRows(rec, dialect, false, labelled)
+			dataRows[i] = rows
+			for _, row := range rows {
+				starts[row.Address] = true
+			}
+		}
+	}
+	var outside []int
+	seen := map[uint16]bool{}
 	for _, rec := range records {
+		if rec.Instr == nil {
+			continue
+		}
+		if t, ok := rec.Instr.BranchTarget(); ok && !starts[t] && !seen[t] {
+			if _, named := labelFor[t]; named {
+				seen[t] = true
+				outside = append(outside, int(t))
+			}
+		}
+	}
+	sort.Ints(outside)
+	for _, t := range outside {
+		fmt.Fprintf(target, "%s EQU 0x%04X\n", labelFor[uint16(t)], t)
+	}
+
+	fmt.Fprintf(target, "%sORG 0x%04X\n", indent, org)
+	for i, rec := range records {
+		if rows, ok := dataRows[i]; ok {
+			for _, row := range rows {
+				if label, ok := labelFor[row.Address]; ok {
+					fmt.Fprintf(target, "%s:\n", label)
+				}
+				line := indent + row.Text
+				if c, ok := hints.Comments[row.Address]; ok {
+					line += "  ; " + c
+				}
+				fmt.Fprintln(target, line)
+			}
+			continue
+		}
 		if label, ok := labelFor[rec.Address]; ok {
 			fmt.Fprintf(target, "%s:\n", label)
 		}
@@ -149,13 +201,9 @@ func WriteAssemblySource(w io.Writer, records []Record, labelFor map[uint16]stri
 			fmt.Fprintln(target, line)
 			continue
 		}
-		line := indent + "DB " + hexList(rec.Bytes)
-		if !rec.Truncated {
-			if c, ok := hints.Comments[rec.Address]; ok {
-				line += "  ; " + c
-			}
-		}
-		fmt.Fprintln(target, line)
+		// What is left is the truncated tail: bytes that end inside an
+		// instruction.
+		fmt.Fprintln(target, indent+"DB "+hexList(rec.Bytes))
 	}
 
 	if buf != nil {
